@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
@@ -8,9 +8,10 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QCheckBox,
+    QComboBox,
     QDateEdit,
-    QDialog,
     QFileDialog,
+    QFormLayout,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -26,12 +27,18 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTabWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from .credential_store import load_smtp_password, save_smtp_password
 from .excel_parser import ParsedSource, build_vendor_preview, collect_vendor_names, parse_source_file
-from .models import SourceFile, VendorPreview
+from .mail_models import MailSettings, VendorEmail
+from .mail_repository import MailRepository
+from .mail_service import send_via_gmail, send_via_outlook
+from .mail_ui import MailSendDialog, PreviewDialog, build_preview_table
+from .models import RenderedDocument, SourceFile, VendorPreview
 from .rendering import render_excel, safe_vendor_name
 from .settings import load_last_output_dir, save_last_output_dir
 
@@ -48,55 +55,16 @@ def default_report_date() -> date:
     return first_of_month - timedelta(days=1)
 
 
-class PreviewDialog(QDialog):
-    def __init__(self, previews: list[VendorPreview], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("미리보기")
-        self.resize(1080, 720)
-
-        layout = QVBoxLayout(self)
-        tabs = QTabWidget()
-        layout.addWidget(tabs)
-
-        for preview in previews:
-            table = build_preview_table(preview.rows)
-            tabs.addTab(table, f"{preview.vendor_name} ({len(preview.rows)})")
-
-        close_button = QPushButton("닫기")
-        close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button, alignment=Qt.AlignRight)
-
-
-def build_preview_table(rows) -> QTableWidget:
-    table = QTableWidget(len(rows), 5)
-    table.setHorizontalHeaderLabels(["사업장", "업체명", "자재코드", "색상코드", "비고"])
-    table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-    table.setSelectionBehavior(QAbstractItemView.SelectRows)
-    table.verticalHeader().setVisible(False)
-    table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-    table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
-
-    for row_index, row in enumerate(rows):
-        values = [row.site_name, row.vendor_name, row.material_code, row.color_code, row.material_name]
-        for col_index, value in enumerate(values):
-            item = QTableWidgetItem(value)
-            if col_index != 4:
-                item.setTextAlignment(Qt.AlignCenter)
-            table.setItem(row_index, col_index, item)
-
-    return table
-
-
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("유상사급 타처보관 확인서 생성기")
-        self.resize(1440, 900)
+        self.resize(1460, 940)
 
         self.parsed_sources: list[ParsedSource] = []
+        self.generated_documents: dict[str, RenderedDocument] = {}
+        self.mail_repository = MailRepository()
+        self.mail_settings = self.mail_repository.load_settings()
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -104,20 +72,89 @@ class MainWindow(QMainWindow):
         page.setContentsMargins(20, 20, 20, 20)
         page.setSpacing(14)
 
+        self.main_tabs = QTabWidget()
+        self.main_tabs.addTab(self._build_work_tab(), "업무")
+        self.main_tabs.addTab(self._build_settings_tab(), "설정")
+        page.addWidget(self.main_tabs)
+
+        self._apply_theme()
+        self._restore_last_output_dir()
+        self._load_mail_settings_into_form()
+        self._load_vendor_emails_table()
+        self._refresh_summary()
+
+    def _build_work_tab(self) -> QWidget:
+        container = QWidget()
+        page = QVBoxLayout(container)
+        page.setContentsMargins(0, 0, 0, 0)
+        page.setSpacing(14)
         page.addWidget(self._build_top_summary())
         page.addWidget(self._build_main_splitter(), stretch=1)
         page.addWidget(self._build_preview_group(), stretch=1)
         page.addLayout(self._build_actions())
+        return container
 
-        self._apply_theme()
-        self._restore_last_output_dir()
-        self._refresh_summary()
+    def _build_settings_tab(self) -> QWidget:
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(14)
+
+        settings_box = QGroupBox("메일 설정")
+        settings_form = QFormLayout(settings_box)
+        self.sender_name_edit = QLineEdit()
+        self.default_method_combo = QComboBox()
+        self.default_method_combo.addItem("Outlook", "outlook")
+        self.default_method_combo.addItem("Gmail(SMTP)", "gmail")
+        self.smtp_host_edit = QLineEdit()
+        self.smtp_port_edit = QLineEdit()
+        self.smtp_username_edit = QLineEdit()
+        self.smtp_password_edit = QLineEdit()
+        self.smtp_password_edit.setEchoMode(QLineEdit.Password)
+        self.smtp_tls_checkbox = QCheckBox("TLS 사용")
+        self.subject_template_edit = QLineEdit()
+        self.body_template_edit = QTextEdit()
+
+        settings_form.addRow("사용자 이름", self.sender_name_edit)
+        settings_form.addRow("기본 발송 방식", self.default_method_combo)
+        settings_form.addRow("SMTP 호스트", self.smtp_host_edit)
+        settings_form.addRow("SMTP 포트", self.smtp_port_edit)
+        settings_form.addRow("SMTP 계정", self.smtp_username_edit)
+        settings_form.addRow("SMTP 비밀번호", self.smtp_password_edit)
+        settings_form.addRow("", self.smtp_tls_checkbox)
+        settings_form.addRow("제목 템플릿", self.subject_template_edit)
+        settings_form.addRow("본문 템플릿", self.body_template_edit)
+        layout.addWidget(settings_box)
+
+        vendor_box = QGroupBox("업체 이메일 관리")
+        vendor_layout = QVBoxLayout(vendor_box)
+        vendor_help = QLabel("현재 불러온 거래처를 가져와 이메일을 입력하면 이후 메일 발송 시 재사용합니다.")
+        vendor_help.setObjectName("helpLabel")
+        vendor_layout.addWidget(vendor_help)
+
+        self.vendor_email_table = QTableWidget(0, 2)
+        self.vendor_email_table.setHorizontalHeaderLabels(["업체명", "이메일"])
+        self.vendor_email_table.verticalHeader().setVisible(False)
+        self.vendor_email_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.vendor_email_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        vendor_layout.addWidget(self.vendor_email_table, stretch=1)
+
+        vendor_buttons = QHBoxLayout()
+        import_vendors_button = QPushButton("현재 거래처 가져오기")
+        save_settings_button = QPushButton("설정 저장")
+        import_vendors_button.clicked.connect(self.import_current_vendors_to_settings)
+        save_settings_button.clicked.connect(self.save_mail_settings)
+        vendor_buttons.addStretch(1)
+        vendor_buttons.addWidget(import_vendors_button)
+        vendor_buttons.addWidget(save_settings_button)
+        vendor_layout.addLayout(vendor_buttons)
+        layout.addWidget(vendor_box, stretch=1)
+        return container
 
     def _build_top_summary(self) -> QWidget:
         panel = QWidget()
         layout = QHBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-
         self.summary_label = QLabel()
         self.summary_label.setObjectName("summaryLabel")
         layout.addWidget(self.summary_label)
@@ -242,13 +279,16 @@ class MainWindow(QMainWindow):
         refresh_button = QPushButton("선택 업체 반영")
         preview_button = QPushButton("전체 미리보기")
         generate_button = QPushButton("산출 실행")
+        mail_button = QPushButton("메일 발송")
         refresh_button.clicked.connect(self.refresh_preview_tabs)
         preview_button.clicked.connect(self.show_preview_dialog)
         generate_button.clicked.connect(self.generate_documents)
+        mail_button.clicked.connect(self.open_mail_dialog)
         row.addStretch(1)
         row.addWidget(refresh_button)
         row.addWidget(preview_button)
         row.addWidget(generate_button)
+        row.addWidget(mail_button)
         return row
 
     def _apply_theme(self) -> None:
@@ -283,7 +323,7 @@ class MainWindow(QMainWindow):
             QPushButton:hover {
                 background: #3a79eb;
             }
-            QLineEdit, QListWidget, QTableWidget, QDateEdit, QTabWidget::pane {
+            QLineEdit, QListWidget, QTableWidget, QDateEdit, QTabWidget::pane, QTextEdit, QComboBox {
                 background: #0f1114;
                 border: 1px solid #30363d;
                 border-radius: 8px;
@@ -330,21 +370,85 @@ class MainWindow(QMainWindow):
         if last_dir:
             self.output_dir_edit.setText(str(last_dir))
 
+    def _load_mail_settings_into_form(self) -> None:
+        settings = self.mail_settings
+        self.sender_name_edit.setText(settings.sender_name)
+        self.default_method_combo.setCurrentIndex(0 if settings.default_method == "outlook" else 1)
+        self.smtp_host_edit.setText(settings.smtp_host)
+        self.smtp_port_edit.setText(str(settings.smtp_port))
+        self.smtp_username_edit.setText(settings.smtp_username)
+        self.smtp_password_edit.setText(load_smtp_password())
+        self.smtp_tls_checkbox.setChecked(settings.smtp_use_tls)
+        self.subject_template_edit.setText(settings.subject_template)
+        self.body_template_edit.setPlainText(settings.body_template)
+
+    def _load_vendor_emails_table(self) -> None:
+        self.vendor_email_table.setRowCount(0)
+        for item in self.mail_repository.load_vendor_emails():
+            row = self.vendor_email_table.rowCount()
+            self.vendor_email_table.insertRow(row)
+            self.vendor_email_table.setItem(row, 0, QTableWidgetItem(item.vendor_name))
+            self.vendor_email_table.setItem(row, 1, QTableWidgetItem(item.email))
+
+    def _collect_vendor_email_rows(self) -> list[VendorEmail]:
+        vendor_emails: list[VendorEmail] = []
+        for row in range(self.vendor_email_table.rowCount()):
+            vendor_item = self.vendor_email_table.item(row, 0)
+            email_item = self.vendor_email_table.item(row, 1)
+            if not vendor_item:
+                continue
+            vendor_emails.append(
+                VendorEmail(
+                    vendor_name=vendor_item.text().strip(),
+                    email=(email_item.text().strip() if email_item else ""),
+                )
+            )
+        return vendor_emails
+
+    def _persist_mail_settings(self, show_message: bool) -> bool:
+        try:
+            smtp_port = int(self.smtp_port_edit.text().strip() or "587")
+        except ValueError:
+            QMessageBox.warning(self, "설정 오류", "SMTP 포트는 숫자로 입력해 주세요.")
+            return False
+
+        settings = MailSettings(
+            sender_name=self.sender_name_edit.text().strip(),
+            default_method=str(self.default_method_combo.currentData()),
+            smtp_host=self.smtp_host_edit.text().strip() or "smtp.gmail.com",
+            smtp_port=smtp_port,
+            smtp_username=self.smtp_username_edit.text().strip(),
+            smtp_use_tls=self.smtp_tls_checkbox.isChecked(),
+            subject_template=self.subject_template_edit.text().strip(),
+            body_template=self.body_template_edit.toPlainText().strip(),
+        )
+        self.mail_repository.save_settings(settings)
+        self.mail_repository.upsert_vendor_emails(self._collect_vendor_email_rows())
+        save_smtp_password(self.smtp_password_edit.text())
+        self.mail_settings = settings
+        if show_message:
+            QMessageBox.information(self, "설정 저장", "메일 설정과 업체 이메일을 저장했습니다.")
+        return True
+
+    def save_mail_settings(self) -> None:
+        self._persist_mail_settings(show_message=True)
+
+    def import_current_vendors_to_settings(self) -> None:
+        if not self.parsed_sources:
+            QMessageBox.warning(self, "거래처 없음", "먼저 거래처 불러오기를 실행해 주세요.")
+            return
+        self.mail_repository.ensure_vendors(collect_vendor_names(self.parsed_sources))
+        self._load_vendor_emails_table()
+        QMessageBox.information(self, "거래처 반영", "현재 거래처 목록을 이메일 관리 표에 반영했습니다.")
+
     def _refresh_summary(self) -> None:
         source_count = self.source_table.rowCount()
         vendor_count = self.vendor_list.count()
         selected_count = len(self._selected_vendor_names(silent=True))
-        self.summary_label.setText(
-            f"소스 파일 {source_count}건 / 거래처 {vendor_count}개 / 선택 업체 {selected_count}개"
-        )
+        self.summary_label.setText(f"소스 파일 {source_count}건 / 거래처 {vendor_count}개 / 선택 업체 {selected_count}개")
 
     def add_source_files(self) -> None:
-        files, _ = QFileDialog.getOpenFileNames(
-            self,
-            "소스 파일 선택",
-            "",
-            "Excel Files (*.xls *.xlsx *.xlsm)",
-        )
+        files, _ = QFileDialog.getOpenFileNames(self, "소스 파일 선택", "", "Excel Files (*.xls *.xlsx *.xlsm)")
         for file_path in files:
             path = Path(file_path)
             row = self.source_table.rowCount()
@@ -390,6 +494,8 @@ class MainWindow(QMainWindow):
             item.setCheckState(Qt.Unchecked)
             self.vendor_list.addItem(item)
 
+        self.mail_repository.ensure_vendors(vendor_names)
+        self._load_vendor_emails_table()
         self.vendor_count_label.setText(f"{len(vendor_names)}개 거래처")
         self.select_all_checkbox.setChecked(False)
         self.preview_tabs.clear()
@@ -439,8 +545,7 @@ class MainWindow(QMainWindow):
 
         self.preview_tabs.clear()
         for preview in previews:
-            table = build_preview_table(preview.rows)
-            self.preview_tabs.addTab(table, f"{preview.vendor_name} ({len(preview.rows)})")
+            self.preview_tabs.addTab(build_preview_table(preview.rows), f"{preview.vendor_name} ({len(preview.rows)})")
         self._refresh_summary()
 
     def show_preview_dialog(self) -> None:
@@ -452,8 +557,7 @@ class MainWindow(QMainWindow):
 
         if self.preview_tabs.count() == 0:
             self.refresh_preview_tabs()
-        dialog = PreviewDialog(previews, self)
-        dialog.exec()
+        PreviewDialog(previews, self).exec()
 
     def select_output_dir(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, "저장 폴더 선택", self.output_dir_edit.text().strip())
@@ -491,21 +595,108 @@ class MainWindow(QMainWindow):
         colliding = [path for path in colliding if path.exists()]
 
         if colliding:
-            answer = QMessageBox.question(
-                self,
-                "덮어쓰기 확인",
-                f"기존 파일 {len(colliding)}건이 있습니다. 덮어쓰시겠습니까?",
-            )
+            answer = QMessageBox.question(self, "덮어쓰기 확인", f"기존 파일 {len(colliding)}건이 있습니다. 덮어쓰시겠습니까?")
             if answer != QMessageBox.Yes:
                 return
 
         report_date = self.report_date_edit.date().toPython()
+        self.generated_documents.clear()
         generated: list[str] = []
         for preview in previews:
             document = render_excel(preview, report_date, output_root)
+            self.generated_documents[preview.vendor_name] = document
             generated.append(f"{document.vendor_name}: {document.output_dir}")
 
         QMessageBox.information(self, "생성 완료", "\n".join(generated))
+
+    def _build_attachment_map(self, previews: list[VendorPreview]) -> dict[str, list[Path]]:
+        attachment_map: dict[str, list[Path]] = {}
+        output_root = Path(self.output_dir_edit.text().strip()) if self.output_dir_edit.text().strip() else None
+        stamp = date.today().strftime("%y%m%d")
+
+        for preview in previews:
+            if preview.vendor_name in self.generated_documents:
+                document = self.generated_documents[preview.vendor_name]
+                attachment_map[preview.vendor_name] = [document.xlsx_path, document.pdf_path]
+                continue
+
+            if not output_root:
+                attachment_map[preview.vendor_name] = []
+                continue
+
+            safe_name = safe_vendor_name(preview.vendor_name)
+            vendor_dir = output_root / safe_name
+            attachment_map[preview.vendor_name] = [
+                vendor_dir / f"{safe_name}_재고자산확인서_{stamp}.xlsx",
+                vendor_dir / f"{safe_name}_재고자산확인서_{stamp}.pdf",
+            ]
+        return attachment_map
+
+    def open_mail_dialog(self) -> None:
+        try:
+            previews = self._selected_previews()
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "메일 오류", str(exc))
+            return
+
+        if not self._persist_mail_settings(show_message=False):
+            return
+
+        dialog = MailSendDialog(
+            settings=self.mail_settings,
+            previews=previews,
+            vendor_email_map=self.mail_repository.get_vendor_email_map(),
+            report_date=self.report_date_edit.date().toPython(),
+            attachment_map=self._build_attachment_map(previews),
+            save_vendor_emails=self.mail_repository.upsert_vendor_emails,
+            parent=self,
+        )
+        if dialog.exec() != MailSendDialog.Accepted:
+            return
+
+        self.mail_repository.upsert_vendor_emails(dialog.collect_vendor_emails())
+        self._load_vendor_emails_table()
+
+        prepared_emails, excluded = dialog.build_prepared_emails()
+        if not prepared_emails:
+            QMessageBox.warning(self, "메일 오류", "\n".join(excluded) if excluded else "발송 가능한 메일이 없습니다.")
+            return
+
+        summary = f"발송 방식: {dialog.selected_method()}\n발송 대상: {len(prepared_emails)}건"
+        if excluded:
+            summary += f"\n제외 대상: {len(excluded)}건\n\n" + "\n".join(excluded)
+        answer = QMessageBox.question(self, "발송 확인", summary + "\n\n이대로 발송하시겠습니까?")
+        if answer != QMessageBox.Yes:
+            return
+
+        method = dialog.selected_method()
+        smtp_password = load_smtp_password() if method == "gmail" else ""
+        if method == "gmail" and (not self.mail_settings.smtp_username or not smtp_password):
+            QMessageBox.warning(self, "메일 오류", "Gmail SMTP 계정 또는 비밀번호가 설정되지 않았습니다.")
+            return
+
+        successes: list[str] = []
+        failures: list[str] = []
+        for item in prepared_emails:
+            try:
+                if method == "outlook":
+                    send_via_outlook(item)
+                else:
+                    send_via_gmail(self.mail_settings, smtp_password, item)
+                successes.append(item.vendor_name)
+            except Exception as exc:  # noqa: BLE001
+                failures.append(f"{item.vendor_name}: {exc}")
+
+        message_lines = [f"성공 {len(successes)}건", f"실패 {len(failures)}건"]
+        if excluded:
+            message_lines.append(f"제외 {len(excluded)}건")
+        if failures:
+            message_lines.append("")
+            message_lines.extend(failures)
+        if excluded:
+            message_lines.append("")
+            message_lines.extend(excluded)
+        QMessageBox.information(self, "발송 결과", "\n".join(message_lines))
 
 
 def build_application() -> QApplication:
