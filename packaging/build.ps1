@@ -1,7 +1,5 @@
 param(
-    [string]$Python = "python",
-    [string]$AppName = "유상사급 타처보관 확인서",
-    [string]$Version = "0.1.0"
+    [string]$Python = "python"
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,10 +11,10 @@ Set-Location (Join-Path $PSScriptRoot "..")
     --noconfirm `
     --clean `
     --windowed `
-    --name "유상사급타처보관" `
+    --name "outsourced_inventory_confirmation" `
     --add-data "resources\\template.xlsx;resources" `
     --paths "src" `
     "src\\outsourced_inventory_confirmation\\__main__.py"
 
-Write-Host "PyInstaller build complete. Output: dist\\유상사급타처보관"
-Write-Host "Installer build can be run with Inno Setup using packaging\\installer.iss"
+Write-Host "PyInstaller build complete. Output: dist\\outsourced_inventory_confirmation"
+Write-Host "Installer build requires Inno Setup with packaging\\installer.iss"

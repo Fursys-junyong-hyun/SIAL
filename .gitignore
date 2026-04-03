@@ -4,3 +4,4 @@ tmp_*/
 build/
 dist/
 dist_installer/
+*.spec
