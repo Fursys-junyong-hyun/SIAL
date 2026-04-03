@@ -1,0 +1,25 @@
+[project]
+name = "outsourced-inventory-confirmation"
+version = "0.1.0"
+description = "유상사급 타처보관 확인서 생성 프로그램"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+  "openpyxl>=3.1.5",
+  "PySide6>=6.8.0",
+  "reportlab>=4.2.0",
+  "xlrd>=2.0.1",
+]
+
+[project.scripts]
+outsourced-inventory-confirmation = "outsourced_inventory_confirmation.main:main"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
