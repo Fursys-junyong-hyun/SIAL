@@ -602,10 +602,14 @@ class MainWindow(QMainWindow):
         report_date = self.report_date_edit.date().toPython()
         self.generated_documents.clear()
         generated: list[str] = []
-        for preview in previews:
-            document = render_excel(preview, report_date, output_root)
-            self.generated_documents[preview.vendor_name] = document
-            generated.append(f"{document.vendor_name}: {document.output_dir}")
+        try:
+            for preview in previews:
+                document = render_excel(preview, report_date, output_root)
+                self.generated_documents[preview.vendor_name] = document
+                generated.append(f"{document.vendor_name}: {document.output_dir}")
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.critical(self, "생성 오류", str(exc))
+            return
 
         QMessageBox.information(self, "생성 완료", "\n".join(generated))
 

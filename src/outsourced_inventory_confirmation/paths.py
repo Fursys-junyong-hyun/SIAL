@@ -1,9 +1,19 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 
 def project_root() -> Path:
+    if getattr(sys, "frozen", False):
+        executable_dir = Path(sys.executable).resolve().parent
+        internal_dir = executable_dir / "_internal"
+        if internal_dir.exists():
+            return internal_dir
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            return Path(meipass)
+        return executable_dir
     return Path(__file__).resolve().parents[2]
 
 
