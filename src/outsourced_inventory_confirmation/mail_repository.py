@@ -14,6 +14,8 @@ SETTINGS_KEYS = {
     "smtp_port",
     "smtp_username",
     "smtp_use_tls",
+    "oauth_client_id",
+    "oauth_account_email",
     "subject_template",
     "body_template",
 }
@@ -61,6 +63,9 @@ class MailRepository:
                 setattr(settings, key, int(value))
             elif key == "smtp_use_tls":
                 setattr(settings, key, value == "1")
+            elif key == "default_method" and value == "gmail":
+                # 레거시 값: SMTP 앱 비밀번호 방식이지만 OAuth 우선 정책에 따라 가능한 경우 OAuth 로 이전
+                setattr(settings, key, "gmail_smtp")
             else:
                 setattr(settings, key, value)
         return settings
@@ -73,6 +78,8 @@ class MailRepository:
             "smtp_port": str(settings.smtp_port),
             "smtp_username": settings.smtp_username,
             "smtp_use_tls": "1" if settings.smtp_use_tls else "0",
+            "oauth_client_id": settings.oauth_client_id,
+            "oauth_account_email": settings.oauth_account_email,
             "subject_template": settings.subject_template,
             "body_template": settings.body_template,
         }

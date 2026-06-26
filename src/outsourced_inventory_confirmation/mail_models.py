@@ -7,11 +7,13 @@ from pathlib import Path
 @dataclass(slots=True)
 class MailSettings:
     sender_name: str = ""
-    default_method: str = "outlook"
+    default_method: str = "gmail_smtp"
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_username: str = ""
     smtp_use_tls: bool = True
+    oauth_client_id: str = ""
+    oauth_account_email: str = ""
     subject_template: str = "[{vendor_name}] 재고자산확인서 송부 (기준일: {report_date_kr})"
     body_template: str = (
         "유상사급 타처보관 자료요청\n\n"
