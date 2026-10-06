@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -33,6 +34,7 @@ from .mail_models import MailSettings, PreparedEmail, VendorEmail
 from .mail_service import (
     build_template_context,
     is_valid_email,
+    parse_email_list,
     render_body,
     render_subject,
     suggested_reply_due_date,
@@ -161,12 +163,16 @@ class MailSendDialog(QDialog):
         seed = suggested_reply_due_date()
         self.reply_due_edit.setDate(QDate(seed.year, seed.month, seed.day))
 
+        self.cc_edit = QLineEdit(self.settings.cc_list)
+        self.cc_edit.setPlaceholderText("예) rabita@fursys.com, other@fursys.com (쉼표로 구분 · 전 업체 공통)")
+
         self.preview_vendor_combo = QComboBox()
         for preview in self.previews:
             self.preview_vendor_combo.addItem(preview.vendor_name)
 
         form.addRow("발송 방식", self.method_combo)
         form.addRow("회신 요청일", self.reply_due_edit)
+        form.addRow("참조(CC)", self.cc_edit)
         form.addRow("미리보기 업체", self.preview_vendor_combo)
         return box
 
@@ -244,13 +250,23 @@ class MailSendDialog(QDialog):
         send_button = QPushButton("발송")
         close_button = QPushButton("취소")
         refresh_button.clicked.connect(self.refresh_targets)
-        send_button.clicked.connect(self.accept)
+        send_button.clicked.connect(self._accept_if_valid)
         close_button.clicked.connect(self.reject)
         buttons.addStretch(1)
         buttons.addWidget(refresh_button)
         buttons.addWidget(send_button)
         buttons.addWidget(close_button)
         return buttons
+
+    def cc_text(self) -> str:
+        return ", ".join(parse_email_list(self.cc_edit.text()))
+
+    def _accept_if_valid(self) -> None:
+        invalid = [item for item in parse_email_list(self.cc_edit.text()) if not is_valid_email(item)]
+        if invalid:
+            QMessageBox.warning(self, "참조 주소 오류", "참조(CC) 이메일 형식이 올바르지 않습니다.\n\n" + "\n".join(invalid))
+            return
+        self.accept()
 
     def _wire_signals(self) -> None:
         self.reply_due_edit.dateChanged.connect(self._update_preview)
@@ -410,6 +426,7 @@ class MailSendDialog(QDialog):
                     subject=subject,
                     body=body,
                     attachments=attachments,
+                    cc=parse_email_list(self.cc_edit.text()),
                 )
             )
         return prepared, excluded

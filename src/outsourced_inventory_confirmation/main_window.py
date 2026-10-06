@@ -762,6 +762,7 @@ class MainWindow(QMainWindow):
             smtp_use_tls=self.smtp_tls_checkbox.isChecked(),
             oauth_client_id=self.oauth_client_id_edit.text().strip(),
             oauth_account_email=self.mail_settings.oauth_account_email,
+            cc_list=self.mail_settings.cc_list,
             subject_template=self.subject_template_edit.text().strip(),
             body_template=self.body_template_edit.toPlainText().strip(),
         )
@@ -1234,6 +1235,8 @@ class MainWindow(QMainWindow):
             return
 
         self.mail_repository.upsert_vendor_emails(dialog.collect_vendor_emails())
+        self.mail_settings.cc_list = dialog.cc_text()
+        self.mail_repository.save_settings(self.mail_settings)
         self._load_vendor_emails_table()
 
         prepared_emails, excluded = dialog.build_prepared_emails()
@@ -1264,6 +1267,8 @@ class MainWindow(QMainWindow):
             f"방식: {method_label}",
             f"대상: {len(prepared_emails)}건",
         ]
+        if prepared_emails[0].cc:
+            summary_lines.append(f"참조(CC): {', '.join(prepared_emails[0].cc)}")
         if excluded:
             summary_lines.append(f"제외: {len(excluded)}건")
             summary_lines.append("")

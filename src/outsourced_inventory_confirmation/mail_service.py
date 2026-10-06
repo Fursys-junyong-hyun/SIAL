@@ -21,6 +21,12 @@ def is_valid_email(value: str) -> bool:
     return bool(EMAIL_PATTERN.match(value.strip())) if value else False
 
 
+def parse_email_list(text: str) -> list[str]:
+    """쉼표/세미콜론/줄바꿈으로 구분된 주소 문자열을 중복 없는 목록으로 변환한다."""
+    items = [item.strip() for item in re.split(r"[,;\n]+", text or "")]
+    return list(dict.fromkeys(item for item in items if item))
+
+
 def suggested_reply_due_date(base: date | None = None) -> date:
     """다음 주 금요일을 기본 회신 기한으로 제안한다."""
     base = base or date.today()
@@ -89,6 +95,8 @@ def _build_message(settings: MailSettings, email: PreparedEmail) -> EmailMessage
     if from_value:
         message["From"] = from_value
     message["To"] = email.recipient
+    if email.cc:
+        message["Cc"] = ", ".join(email.cc)
     message["Subject"] = email.subject
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid()
@@ -187,6 +195,8 @@ def send_via_outlook(email: PreparedEmail) -> None:
             ) from exc
         message = outlook.CreateItem(0)
         message.To = email.recipient
+        if email.cc:
+            message.CC = "; ".join(email.cc)
         message.Subject = email.subject
         message.Body = email.body
         for attachment in email.attachments:

@@ -16,6 +16,7 @@ SETTINGS_KEYS = {
     "smtp_use_tls",
     "oauth_client_id",
     "oauth_account_email",
+    "cc_list",
     "subject_template",
     "body_template",
 }
@@ -80,6 +81,7 @@ class MailRepository:
             "smtp_use_tls": "1" if settings.smtp_use_tls else "0",
             "oauth_client_id": settings.oauth_client_id,
             "oauth_account_email": settings.oauth_account_email,
+            "cc_list": settings.cc_list,
             "subject_template": settings.subject_template,
             "body_template": settings.body_template,
         }

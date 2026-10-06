@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -14,6 +14,7 @@ class MailSettings:
     smtp_use_tls: bool = True
     oauth_client_id: str = ""
     oauth_account_email: str = ""
+    cc_list: str = ""
     subject_template: str = "[{vendor_name}] 재고자산확인서 송부 (기준일: {report_date_kr})"
     body_template: str = (
         "유상사급 타처보관 자료요청\n\n"
@@ -41,3 +42,4 @@ class PreparedEmail:
     subject: str
     body: str
     attachments: list[Path]
+    cc: list[str] = field(default_factory=list)
