@@ -159,10 +159,32 @@ def save_as_eml(settings: MailSettings, email: PreparedEmail, output_path: Path)
     return output_path
 
 
+class OutlookUnavailableError(RuntimeError):
+    """이 PC에 Outlook 이 설치돼 있지 않거나 COM 등록이 안 된 상태."""
+
+
+def is_outlook_available() -> bool:
+    """Outlook COM 오브젝트를 실제로 잠깐 붙였다 뗀다. 실패하면 False."""
+    pythoncom.CoInitialize()
+    try:
+        try:
+            win32com.client.Dispatch("Outlook.Application")
+        except Exception:  # noqa: BLE001 - COM 예외 종류가 다양함
+            return False
+        return True
+    finally:
+        pythoncom.CoUninitialize()
+
+
 def send_via_outlook(email: PreparedEmail) -> None:
     pythoncom.CoInitialize()
     try:
-        outlook = win32com.client.Dispatch("Outlook.Application")
+        try:
+            outlook = win32com.client.Dispatch("Outlook.Application")
+        except Exception as exc:  # noqa: BLE001 - COM 오류를 명시적 예외로 변환
+            raise OutlookUnavailableError(
+                "이 PC에 Outlook 이 설치돼 있지 않거나 COM 등록이 안 되어 있습니다."
+            ) from exc
         message = outlook.CreateItem(0)
         message.To = email.recipient
         message.Subject = email.subject

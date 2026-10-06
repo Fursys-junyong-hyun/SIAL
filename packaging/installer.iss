@@ -1,5 +1,5 @@
 #define MyAppName "유상사급 타처보관 확인서"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "1.03"
 #define MyAppPublisher "FURSYS"
 #define MyAppExeName "outsourced_inventory_confirmation.exe"
 #define MyAppManualName "유상사급타처보관_사용자매뉴얼.pdf"

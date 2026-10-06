@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 from .credential_store import (
+    CredentialSaveError,
     clear_oauth_refresh_token,
     load_oauth_client_secret,
     load_oauth_refresh_token,
@@ -49,6 +50,7 @@ from .mail_models import MailSettings, VendorEmail
 from .mail_oauth import refresh_access_token, run_authorization_flow
 from .mail_repository import MailRepository
 from .mail_service import (
+    is_outlook_available,
     is_valid_email,
     save_as_eml,
     send_via_gmail,
@@ -111,7 +113,9 @@ def default_report_date() -> date:
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("유상사급 타처보관 확인서 생성기")
+        from . import __version__
+
+        self.setWindowTitle(f"유상사급 타처보관 확인서 생성기 v{__version__}")
         self.resize(1460, 960)
 
         self.parsed_sources: list[ParsedSource] = []
@@ -763,8 +767,18 @@ class MainWindow(QMainWindow):
         )
         self.mail_repository.save_settings(settings)
         self.mail_repository.upsert_vendor_emails(self._collect_vendor_email_rows())
-        save_smtp_password(self._sanitized_password())
-        save_oauth_client_secret(self.oauth_client_secret_edit.text().strip())
+        try:
+            save_smtp_password(self._sanitized_password())
+            save_oauth_client_secret(self.oauth_client_secret_edit.text().strip())
+        except CredentialSaveError as exc:
+            QMessageBox.warning(
+                self,
+                "비밀번호 저장 실패",
+                "비밀번호를 안전 저장소에 저장하지 못했습니다.\n"
+                "이번 실행 중에는 화면에 입력된 값으로 정상 발송되지만,\n"
+                "프로그램을 다시 켜면 비밀번호를 다시 입력해야 할 수 있습니다.\n\n"
+                f"세부 오류: {exc}",
+            )
         self.mail_settings = settings
         if show_message:
             QMessageBox.information(self, "설정 저장", "메일 설정과 업체 이메일을 저장했습니다.")
@@ -773,6 +787,14 @@ class MainWindow(QMainWindow):
     def _sanitized_password(self) -> str:
         # Gmail 앱 비밀번호는 보통 'xxxx xxxx xxxx xxxx' 공백 포함 16자리 형식이 안내됨.
         return self.smtp_password_edit.text().replace(" ", "")
+
+    def _current_smtp_password(self) -> str:
+        """발송에 사용할 앱 비밀번호. 화면 입력값 우선, 없으면 저장소에서 로드.
+
+        연결 테스트는 화면 값으로 성공했는데 저장소 쓰기가 막힌 PC 에서
+        발송만 실패하는 문제를 막는다.
+        """
+        return self._sanitized_password() or load_smtp_password()
 
     def save_mail_settings(self) -> None:
         self._persist_mail_settings(show_message=True)
@@ -928,7 +950,7 @@ class MainWindow(QMainWindow):
         )
 
     def _prompt_for_setup_if_missing(self) -> None:
-        has_smtp_password = bool(self.mail_settings.smtp_username and load_smtp_password())
+        has_smtp_password = bool(self.mail_settings.smtp_username and self._current_smtp_password())
         has_oauth = bool(self.mail_settings.oauth_account_email and load_oauth_refresh_token())
         if not has_smtp_password and not has_oauth:
             self.main_tabs.setCurrentIndex(1)
@@ -1224,6 +1246,9 @@ class MainWindow(QMainWindow):
             return
 
         method = dialog.selected_method()
+        method = self._resolve_method(method)
+        if method is None:
+            return
         if not self._method_prerequisites_ok(method):
             return
 
@@ -1284,6 +1309,47 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.information(self, "발송 결과", "\n".join(result_lines))
 
+    def _resolve_method(self, method: str) -> str | None:
+        """실행 직전에 발송 방식이 실제로 사용 가능한지 확인한다.
+
+        Outlook 이 이 PC 에 없는데 사용자가 Outlook 을 골랐다면, Gmail SMTP 로
+        자동 전환할지 물어보고 승낙 시 대체 방식을 반환한다. 사용자가 취소하면 None.
+        그 외 방식은 그대로 통과.
+        """
+        if method != "outlook":
+            return method
+        if is_outlook_available():
+            return "outlook"
+
+        # Outlook 미설치. Gmail SMTP 가 준비돼 있다면 전환을 제안.
+        has_smtp = bool(self.mail_settings.smtp_username and self._current_smtp_password())
+        if has_smtp:
+            answer = QMessageBox.question(
+                self,
+                "Outlook 사용 불가",
+                "이 PC 에 Outlook 이 설치돼 있지 않거나 사용할 수 없습니다.\n\n"
+                "Gmail (앱 비밀번호) 로 대신 발송할까요?\n"
+                "'예'를 누르면 이번 발송을 Gmail SMTP 로 진행합니다.",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.Yes,
+            )
+            if answer == QMessageBox.Yes:
+                # 이번 세션의 기본값도 함께 갱신해서 다음 발송부터도 편하게.
+                self.mail_settings.default_method = "gmail_smtp"
+                self.mail_repository.save_settings(self.mail_settings)
+                self._select_default_method("gmail_smtp")
+                return "gmail_smtp"
+            return None
+
+        QMessageBox.warning(
+            self,
+            "Outlook 사용 불가",
+            "이 PC 에 Outlook 이 설치돼 있지 않거나 사용할 수 없습니다.\n"
+            "메일 설정 탭에서 Gmail 주소와 앱 비밀번호를 등록한 뒤 다시 시도해 주세요.",
+        )
+        self.main_tabs.setCurrentIndex(1)
+        return None
+
     def _method_prerequisites_ok(self, method: str) -> bool:
         if method == "gmail_oauth":
             if not (self.mail_settings.oauth_client_id and load_oauth_client_secret() and load_oauth_refresh_token()):
@@ -1297,7 +1363,7 @@ class MainWindow(QMainWindow):
                     self.main_tabs.setCurrentIndex(1)
                 return False
         elif method == "gmail_smtp":
-            if not (self.mail_settings.smtp_username and load_smtp_password()):
+            if not (self.mail_settings.smtp_username and self._current_smtp_password()):
                 answer = QMessageBox.question(
                     self,
                     "Gmail 앱 비밀번호 필요",
@@ -1347,7 +1413,7 @@ class MainWindow(QMainWindow):
             return successes, failures, eml_folder
 
         if method == "gmail_smtp":
-            password = load_smtp_password()
+            password = self._current_smtp_password()
             for item in prepared_emails:
                 try:
                     send_via_gmail(self.mail_settings, password, item)

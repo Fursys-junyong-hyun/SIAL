@@ -1,6 +1,6 @@
 [project]
 name = "outsourced-inventory-confirmation"
-version = "0.1.0"
+version = "1.03"
 description = "유상사급 타처보관 확인서 생성 프로그램"
 readme = "README.md"
 requires-python = ">=3.11"
