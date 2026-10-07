@@ -97,6 +97,8 @@ def _build_message(settings: MailSettings, email: PreparedEmail) -> EmailMessage
     message["To"] = email.recipient
     if email.cc:
         message["Cc"] = ", ".join(email.cc)
+    if email.reply_to:
+        message["Reply-To"] = ", ".join(email.reply_to)
     message["Subject"] = email.subject
     message["Date"] = formatdate(localtime=True)
     message["Message-ID"] = make_msgid()
@@ -197,6 +199,8 @@ def send_via_outlook(email: PreparedEmail) -> None:
         message.To = email.recipient
         if email.cc:
             message.CC = "; ".join(email.cc)
+        for address in email.reply_to:
+            message.ReplyRecipients.Add(address)
         message.Subject = email.subject
         message.Body = email.body
         for attachment in email.attachments:

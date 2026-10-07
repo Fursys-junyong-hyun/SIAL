@@ -17,6 +17,7 @@ SETTINGS_KEYS = {
     "oauth_client_id",
     "oauth_account_email",
     "cc_list",
+    "reply_to",
     "subject_template",
     "body_template",
 }
@@ -82,6 +83,7 @@ class MailRepository:
             "oauth_client_id": settings.oauth_client_id,
             "oauth_account_email": settings.oauth_account_email,
             "cc_list": settings.cc_list,
+            "reply_to": settings.reply_to,
             "subject_template": settings.subject_template,
             "body_template": settings.body_template,
         }

@@ -15,6 +15,7 @@ class MailSettings:
     oauth_client_id: str = ""
     oauth_account_email: str = ""
     cc_list: str = ""
+    reply_to: str = ""
     subject_template: str = "[{vendor_name}] 재고자산확인서 송부 (기준일: {report_date_kr})"
     body_template: str = (
         "유상사급 타처보관 자료요청\n\n"
@@ -43,3 +44,4 @@ class PreparedEmail:
     body: str
     attachments: list[Path]
     cc: list[str] = field(default_factory=list)
+    reply_to: list[str] = field(default_factory=list)

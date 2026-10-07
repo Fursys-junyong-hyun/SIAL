@@ -763,6 +763,7 @@ class MainWindow(QMainWindow):
             oauth_client_id=self.oauth_client_id_edit.text().strip(),
             oauth_account_email=self.mail_settings.oauth_account_email,
             cc_list=self.mail_settings.cc_list,
+            reply_to=self.mail_settings.reply_to,
             subject_template=self.subject_template_edit.text().strip(),
             body_template=self.body_template_edit.toPlainText().strip(),
         )
@@ -1236,6 +1237,7 @@ class MainWindow(QMainWindow):
 
         self.mail_repository.upsert_vendor_emails(dialog.collect_vendor_emails())
         self.mail_settings.cc_list = dialog.cc_text()
+        self.mail_settings.reply_to = dialog.reply_to_text()
         self.mail_repository.save_settings(self.mail_settings)
         self._load_vendor_emails_table()
 
@@ -1269,6 +1271,8 @@ class MainWindow(QMainWindow):
         ]
         if prepared_emails[0].cc:
             summary_lines.append(f"참조(CC): {', '.join(prepared_emails[0].cc)}")
+        if prepared_emails[0].reply_to:
+            summary_lines.append(f"회신 주소: {', '.join(prepared_emails[0].reply_to)}")
         if excluded:
             summary_lines.append(f"제외: {len(excluded)}건")
             summary_lines.append("")

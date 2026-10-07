@@ -166,6 +166,9 @@ class MailSendDialog(QDialog):
         self.cc_edit = QLineEdit(self.settings.cc_list)
         self.cc_edit.setPlaceholderText("예) rabita@fursys.com, other@fursys.com (쉼표로 구분 · 전 업체 공통)")
 
+        self.reply_to_edit = QLineEdit(self.settings.reply_to)
+        self.reply_to_edit.setPlaceholderText("예) rabita@fursys.com (업체가 '답장'을 누르면 이 주소로 전달됨 · 비우면 발신 계정)")
+
         self.preview_vendor_combo = QComboBox()
         for preview in self.previews:
             self.preview_vendor_combo.addItem(preview.vendor_name)
@@ -173,6 +176,7 @@ class MailSendDialog(QDialog):
         form.addRow("발송 방식", self.method_combo)
         form.addRow("회신 요청일", self.reply_due_edit)
         form.addRow("참조(CC)", self.cc_edit)
+        form.addRow("회신 주소", self.reply_to_edit)
         form.addRow("미리보기 업체", self.preview_vendor_combo)
         return box
 
@@ -258,14 +262,18 @@ class MailSendDialog(QDialog):
         buttons.addWidget(close_button)
         return buttons
 
+    def reply_to_text(self) -> str:
+        return ", ".join(parse_email_list(self.reply_to_edit.text()))
+
     def cc_text(self) -> str:
         return ", ".join(parse_email_list(self.cc_edit.text()))
 
     def _accept_if_valid(self) -> None:
-        invalid = [item for item in parse_email_list(self.cc_edit.text()) if not is_valid_email(item)]
-        if invalid:
-            QMessageBox.warning(self, "참조 주소 오류", "참조(CC) 이메일 형식이 올바르지 않습니다.\n\n" + "\n".join(invalid))
-            return
+        for label, edit in (("참조(CC)", self.cc_edit), ("회신 주소", self.reply_to_edit)):
+            invalid = [item for item in parse_email_list(edit.text()) if not is_valid_email(item)]
+            if invalid:
+                QMessageBox.warning(self, f"{label} 오류", f"{label} 이메일 형식이 올바르지 않습니다.\n\n" + "\n".join(invalid))
+                return
         self.accept()
 
     def _wire_signals(self) -> None:
@@ -427,6 +435,7 @@ class MailSendDialog(QDialog):
                     body=body,
                     attachments=attachments,
                     cc=parse_email_list(self.cc_edit.text()),
+                    reply_to=parse_email_list(self.reply_to_edit.text()),
                 )
             )
         return prepared, excluded
